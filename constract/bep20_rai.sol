@@ -379,7 +379,7 @@ contract Pausable is Ownable {
 }
 
 abstract contract Mintable is Ownable {
-  event MinterUpdated(address indexed from, address indexed to);
+  event MinterChanged(address indexed from, address indexed to);
 
   address private _minter;
 
@@ -389,7 +389,7 @@ abstract contract Mintable is Ownable {
   constructor () {
     address msgSender = _msgSender();
     _minter = msgSender;
-    emit MinterUpdated(address(0), msgSender);
+    emit MinterChanged(address(0), msgSender);
   }
 
   /**
@@ -408,26 +408,35 @@ abstract contract Mintable is Ownable {
   }
 
   /**
-   * @dev Update minter. Can only be called by the current owner.
+   * @dev Change minter. Can only be called by the current owner.
    */
-  function updateMinter(address newMinter) onlyOwner public {
+  function changeMinter(address newMinter) onlyOwner public {
     require(_minter != newMinter, "Mintable: same with the exising minter");
-    emit MinterUpdated(_minter, newMinter);
+    emit MinterChanged(_minter, newMinter);
     _minter = newMinter;
   }
 }
 
-contract BEP20Token is Context, IBEP20, Ownable, Pausable, Mintable {
+contract RaicoinToken is Context, IBEP20, Ownable, Pausable, Mintable {
   using SafeMath for uint256;
 
   mapping (address => uint256) private _balances;
 
   mapping (address => mapping (address => uint256)) private _allowances;
 
+  mapping (uint256 => uint256) private _minted;
+
   uint256 private _totalSupply;
   uint8 private _decimals;
   string private _symbol;
   string private _name;
+
+
+  /**
+   * @dev Mint RAI BEP20 with a source block of Raicoin mainnet
+   */
+  event Mint(uint256 indexed source, address indexed to, uint256 amount);
+
 
   /**
    * @dev Redeem RAI BEP20 to Raicoin mainnet
@@ -435,7 +444,7 @@ contract BEP20Token is Context, IBEP20, Ownable, Pausable, Mintable {
   event Redeem(address indexed from, uint256 indexed to, uint256 amount);
 
   constructor() {
-    _name = "BEP20 Raicoin Token";
+    _name = "Raicoin Token";
     _symbol = "RAI";
     _decimals = 9;
     _totalSupply = 0;
@@ -573,16 +582,41 @@ contract BEP20Token is Context, IBEP20, Ownable, Pausable, Mintable {
   }
 
   /**
-   * @dev Creates `amount` tokens and assigns them to `msg.sender`, increasing
+   * @dev Get the BSC block height by source block of Raicoin
+   */
+  function getMintBlock(uint256 source) public view returns (uint256) {
+    return _minted[source];
+  }
+
+
+    /**
+   * @dev Get the signer from a mint message
+   */
+  function getMintSigner(uint256 source, address recipient, uint256 amount, uint8 v, bytes32 r, bytes32 s) public view returns (address) {
+    bytes memory message = abi.encodePacked(bytes1(0x19), bytes1(0), address(this), source, recipient, amount);
+    return ecrecover(keccak256(message), v, r, s);
+  }
+
+  /**
+   * @dev Creates `amount` tokens and assigns them to `recipient`, increasing
    * the total supply.
    *
    * Requirements
    *
    * - `msg.sender` must be the token owner
    */
-  function mint(address recipient, uint256 amount) public onlyMinter whenNotPaused returns (bool) {
+  function mint(uint256 source, address recipient, uint256 amount, uint8 v, bytes32 r, bytes32 s) public whenNotPaused returns (bool) {
+    require(source != uint256(0), "RAI: zero source");
     require(recipient != address(0), "RAI: mint to the zero address");
+    require(amount != uint256(0), "RAI: mint zero amount");
+
+    address signer = getMintSigner(source, recipient, amount, v, r, s);
+    require(minter() == signer, "RAI: invalid signature");
+    require(_minted[source] == 0, "RAI: has been minted");
+
+    _minted[source] = block.number;
     _mint(recipient, amount);
+    emit Mint(source, recipient, amount);
     return true;
   }
 
